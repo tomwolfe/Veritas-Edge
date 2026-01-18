@@ -96,7 +96,8 @@ async function processQueue() {
       const classificationPrompt = `<|system|>
 You are a precise linguistic analyzer. Identify if the following text contains a specific, verifiable factual claim that could be checked against history, science, or news.
 Ignore greetings, opinions, questions, or vague statements.
-Respond ONLY with "YES" or "NO".<|end|>
+Respond ONLY with "YES" or "NO".
+A factual claim is a statement that can be proven true or false with evidence.<|end|>
 <|user|>
 "${data.text}"<|end|>
 <|assistant|>`;
@@ -121,7 +122,11 @@ Respond ONLY with "YES" or "NO".<|end|>
         const factCheckPrompt = `<|system|>
 You are a real-time fact-checker. Provide a verdict (True, False, or Unverified) and a 1-sentence explanation.
 Be objective and concise.
-Format: [VERDICT] | [EXPLANATION]<|end|>
+Format your response as: [VERDICT] EXPLANATION
+Where VERDICT is exactly one of: True, False, Unverified
+Example: [True] Water boils at 100°C at sea level.
+Example: [False] The Earth is flat.
+Example: [Unverified] This claim requires further investigation.<|end|>
 <|user|>
 "${data.text}"<|end|>
 <|assistant|>`;

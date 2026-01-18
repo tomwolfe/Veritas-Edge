@@ -130,14 +130,42 @@ export default function DebateLens() {
           };
         }
 
-        // Robust parsing during streaming
-        const verdictMatch = result.match(/\[?(True|False|Unverified)\]?[:\s|]*-?\s*(.*)/i);
+        // Enhanced parsing with multiple format support
+        let verdict: 'True' | 'False' | 'Unverified' | null = null;
+        let explanation = '';
+
+        // Format 1: [Verdict] Explanation
+        let verdictMatch = result.match(/\[([Tt]rue|[Ff]alse|[Uu]nverified)\]\s*(.*)/);
+        if (!verdictMatch) {
+          // Format 2: Verdict: Explanation
+          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified):\s*(.*)/);
+        }
+        if (!verdictMatch) {
+          // Format 3: Verdict | Explanation
+          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*\|\s*(.*)/);
+        }
+        if (!verdictMatch) {
+          // Format 4: Verdict - Explanation
+          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*[-–—]\s*(.*)/);
+        }
+        if (!verdictMatch) {
+          // Format 5: Just verdict word with context
+          const verdictWordMatch = result.match(/\b([Tt]rue|[Ff]alse|[Uu]nverified)\b/);
+          if (verdictWordMatch) {
+            const matchedVerdict = verdictWordMatch[1].toLowerCase();
+            verdict = (matchedVerdict.charAt(0).toUpperCase() + matchedVerdict.slice(1)) as 'True' | 'False' | 'Unverified';
+            explanation = result.replace(verdictWordMatch[0], '').trim() || 'Analyzing...';
+          }
+        }
 
         if (verdictMatch) {
-          const verdictStr = verdictMatch[1].toLowerCase();
-          const verdict = (verdictStr.charAt(0).toUpperCase() + verdictStr.slice(1)) as 'True' | 'False' | 'Unverified';
-          const explanation = verdictMatch[2].trim() || 'Analyzing...';
+          const matchedVerdict = verdictMatch[1].toLowerCase();
+          verdict = (matchedVerdict.charAt(0).toUpperCase() + matchedVerdict.slice(1)) as 'True' | 'False' | 'Unverified';
+          explanation = verdictMatch[2].trim() || 'Analyzing...';
+        }
 
+        // If we have a verdict, use it; otherwise default to Unverified
+        if (verdict) {
           return {
             ...t,
             isChecking: !isDone,
@@ -285,19 +313,32 @@ export default function DebateLens() {
   if (status === 'initializing' || status === 'loading') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-8">
-        <Loader2 className="w-12 h-12 animate-spin mb-4 text-blue-500" />
-        <h1 className="text-2xl font-bold mb-2 text-center text-balance tracking-tight">Initializing DebateLens</h1>
-        <p className="text-slate-400 mb-8 text-sm">Preparing WebGPU environment and AI models...</p>
+        <div className="relative mb-8">
+          <Loader2 className="w-16 h-16 animate-spin text-blue-500" />
+          <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-xs font-bold">
+            AI
+          </div>
+        </div>
 
-        <div className="w-full max-w-md space-y-4">
+        <h1 className="text-2xl font-bold mb-2 text-center text-balance tracking-tight">Initializing DebateLens</h1>
+        <p className="text-slate-400 mb-8 text-center max-w-md">
+          {progress.stt === 0 && progress.llm === 0
+            ? "Setting up WebGPU environment..."
+            : "Downloading and loading AI models..."}
+        </p>
+
+        <div className="w-full max-w-md space-y-6">
           <div>
-            <div className="flex justify-between text-xs font-mono mb-1.5 text-slate-400">
-              <span>WHISPER STT</span>
-              <span>{Math.round(progress.stt || 0)}%</span>
+            <div className="flex justify-between text-sm font-medium mb-2">
+              <span className="flex items-center gap-2">
+                <span className="bg-blue-500/20 text-blue-400 px-2 py-1 rounded text-xs">STT</span>
+                Whisper Speech Recognition
+              </span>
+              <span className="text-slate-300">{Math.round(progress.stt || 0)}%</span>
             </div>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden">
               <motion.div
-                className="bg-blue-500 h-full"
+                className="bg-gradient-to-r from-blue-600 to-blue-400 h-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${progress.stt || 0}%` }}
               />
@@ -305,21 +346,50 @@ export default function DebateLens() {
           </div>
 
           <div>
-            <div className="flex justify-between text-xs font-mono mb-1.5 text-slate-400">
-              <span>PHI-3 LLM</span>
-              <span>{Math.round(progress.llm || 0)}%</span>
+            <div className="flex justify-between text-sm font-medium mb-2">
+              <span className="flex items-center gap-2">
+                <span className="bg-purple-500/20 text-purple-400 px-2 py-1 rounded text-xs">LLM</span>
+                Phi-3 Mini Language Model
+              </span>
+              <span className="text-slate-300">{Math.round(progress.llm || 0)}%</span>
             </div>
-            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden">
               <motion.div
-                className="bg-purple-500 h-full"
+                className="bg-gradient-to-r from-purple-600 to-purple-400 h-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${progress.llm || 0}%` }}
               />
             </div>
           </div>
         </div>
-        <p className="mt-12 text-slate-500 text-[10px] uppercase tracking-[0.2em] font-medium border-t border-slate-900 pt-4">
-          Requires WebGPU • ~2.5GB Download
+
+        <div className="mt-8 p-4 bg-slate-800/50 rounded-xl border border-slate-700 max-w-md">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 text-blue-400">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div className="text-sm text-slate-300">
+              <p className="font-medium mb-1">What's happening now?</p>
+              <ul className="space-y-1 text-slate-400">
+                <li className="flex items-start gap-2">
+                  <span className="text-blue-400 mt-1">•</span>
+                  <span>Downloading AI models (~2.5GB total)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-blue-400 mt-1">•</span>
+                  <span>Initializing WebGPU for hardware acceleration</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-blue-400 mt-1">•</span>
+                  <span>Preparing real-time fact-checking engine</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <p className="mt-8 text-slate-600 text-[10px] uppercase tracking-[0.2em] font-medium border-t border-slate-900 pt-4">
+          Requires WebGPU • First-time setup may take 1-3 minutes
         </p>
       </div>
     );
@@ -415,9 +485,19 @@ export default function DebateLens() {
       <div className="px-6 py-4 bg-slate-900/30 border-b border-slate-800/30">
         <form onSubmit={handleManualSubmit} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <div className="flex-1 w-full">
-            <label htmlFor="manual-input" className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
-              Manual Input (for text fact-checking)
-            </label>
+            <div className="flex justify-between items-center mb-2">
+              <label htmlFor="manual-input" className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                Manual Input (for text fact-checking)
+              </label>
+              <span className="text-xs text-slate-500">
+                Speaker: <span className={cn(
+                  "font-bold",
+                  activeSpeaker === 'A' ? "text-blue-400" : "text-red-400"
+                )}>
+                  {activeSpeaker}
+                </span>
+              </span>
+            </div>
             <textarea
               id="manual-input"
               placeholder={`Enter text to fact-check as Speaker ${activeSpeaker}`}
@@ -430,13 +510,19 @@ export default function DebateLens() {
                 }
               }}
             />
-            <p className="text-xs text-slate-500 mt-2">
-              Minimum 3 words required • Press Enter to submit
-            </p>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <span className="text-xs text-slate-500 flex items-center gap-1">
+                <span className={cn("w-2 h-2 rounded-full",
+                  activeSpeaker === 'A' ? "bg-blue-500" : "bg-red-500")}></span>
+                Minimum 3 words required
+              </span>
+              <span className="text-xs text-slate-500">• Press Enter to submit</span>
+              <span className="text-xs text-slate-500">• Press Tab to switch speaker</span>
+            </div>
           </div>
           <button
             type="submit"
-            className="mt-4 sm:mt-0 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors whitespace-nowrap"
+            className="mt-4 sm:mt-0 px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-xl transition-all whitespace-nowrap shadow-lg shadow-blue-500/20"
           >
             Submit for Fact-Check
           </button>
