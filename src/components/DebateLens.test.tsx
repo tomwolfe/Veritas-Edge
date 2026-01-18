@@ -341,4 +341,42 @@ describe('DebateLens', () => {
     });
     expect(await screen.findByText('Unverified')).toBeInTheDocument();
   });
+
+  it('handles manual text submission', async () => {
+    render(<DebateLens />);
+    await act(async () => {
+      mockWorkerInstance.onmessage({ data: { status: 'ready' } });
+    });
+
+    const textarea = screen.getByPlaceholderText(/Enter text to fact-check as Speaker A/i);
+    fireEvent.change(textarea, { target: { value: 'This is a manual test claim.' } });
+
+    const submitButton = screen.getByText('Submit for Fact-Check');
+    fireEvent.click(submitButton);
+
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'fact-check',
+        data: expect.objectContaining({ text: 'This is a manual test claim.' })
+      })
+    );
+  });
+
+  it('does not submit manual text with less than 3 words', async () => {
+    render(<DebateLens />);
+    await act(async () => {
+      mockWorkerInstance.onmessage({ data: { status: 'ready' } });
+    });
+
+    const textarea = screen.getByPlaceholderText(/Enter text to fact-check as Speaker A/i);
+    fireEvent.change(textarea, { target: { value: 'Too short' } });
+
+    const submitButton = screen.getByText('Submit for Fact-Check');
+    fireEvent.click(submitButton);
+
+    // The worker should not receive a fact-check message for text with less than 3 words
+    const postMessageCalls = (mockWorkerInstance.postMessage as any).mock.calls;
+    const factCheckCalls = postMessageCalls.filter((call: any) => call[0].type === 'fact-check');
+    expect(factCheckCalls).toHaveLength(0);
+  });
 });

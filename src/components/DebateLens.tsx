@@ -89,7 +89,7 @@ export default function DebateLens() {
   }, [transcripts]);
 
   const activeSpeakerRef = useRef(activeSpeaker);
-  
+
   useEffect(() => {
     activeSpeakerRef.current = activeSpeaker;
   }, [activeSpeaker]);
@@ -121,23 +121,23 @@ export default function DebateLens() {
     setTranscripts(prev => prev.map(t => {
       if (t.id === id) {
         const trimmedResult = result.trim();
-        
+
         if (trimmedResult.toUpperCase().includes('NOT_A_CLAIM') && trimmedResult.length < 20) {
-          return { 
-            ...t, 
-            isChecking: !isDone, 
-            factCheck: isDone ? { verdict: 'NOT_A_CLAIM', explanation: '' } : undefined 
+          return {
+            ...t,
+            isChecking: !isDone,
+            factCheck: isDone ? { verdict: 'NOT_A_CLAIM', explanation: '' } : undefined
           };
         }
-        
+
         // Robust parsing during streaming
         const verdictMatch = result.match(/\[?(True|False|Unverified)\]?[:\s|]*-?\s*(.*)/i);
-        
+
         if (verdictMatch) {
           const verdictStr = verdictMatch[1].toLowerCase();
           const verdict = (verdictStr.charAt(0).toUpperCase() + verdictStr.slice(1)) as 'True' | 'False' | 'Unverified';
           const explanation = verdictMatch[2].trim() || 'Analyzing...';
-          
+
           return {
             ...t,
             isChecking: !isDone,
@@ -155,6 +155,38 @@ export default function DebateLens() {
       return t;
     }));
   }, []);
+
+  const handleManualSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    const textarea = document.getElementById('manual-input') as HTMLTextAreaElement;
+    if (textarea && textarea.value.trim()) {
+      const text = textarea.value.trim();
+      const wordCount = text.split(/\s+/).length;
+
+      // Only submit if it meets the minimum word count
+      if (wordCount >= 3) {
+        const id = Math.random().toString(36).substring(7);
+
+        setTranscripts(prev => [
+          ...prev,
+          {
+            id,
+            text,
+            speaker: activeSpeaker,
+            isChecking: true,
+            timestamp: Date.now(),
+          }
+        ]);
+
+        workerRef.current?.postMessage({
+          type: 'fact-check',
+          data: { text, id }
+        });
+
+        textarea.value = ''; // Clear the input
+      }
+    }
+  }, [activeSpeaker]);
 
   // Save to localStorage
   useEffect(() => {
@@ -174,14 +206,14 @@ export default function DebateLens() {
     const w = new Worker(new URL('../workers/inference.worker.ts', import.meta.url), {
         type: 'module'
     });
-    
+
     w.onmessage = (e) => {
       const { status, progress: p, model, text, id, error, isDone } = e.data;
 
       if (status === 'ready') setStatus('ready');
       if (status === 'error') {
         if (id) {
-          setTranscripts(prev => prev.map(t => 
+          setTranscripts(prev => prev.map(t =>
             t.id === id ? { ...t, isChecking: false, factCheck: { verdict: 'Unverified', explanation: `Error: ${error}` } } : t
           ));
         } else {
@@ -240,7 +272,7 @@ export default function DebateLens() {
         <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
         <h1 className="text-2xl font-bold mb-2">Initialization Failed</h1>
         <p className="text-slate-400 text-center max-w-md">{errorMessage || 'An unknown error occurred while initializing WebGPU or loading models.'}</p>
-        <button 
+        <button
           onClick={() => window.location.reload()}
           className="mt-8 px-6 py-2 bg-blue-600 rounded-lg font-bold hover:bg-blue-700 transition-colors"
         >
@@ -256,7 +288,7 @@ export default function DebateLens() {
         <Loader2 className="w-12 h-12 animate-spin mb-4 text-blue-500" />
         <h1 className="text-2xl font-bold mb-2 text-center text-balance tracking-tight">Initializing DebateLens</h1>
         <p className="text-slate-400 mb-8 text-sm">Preparing WebGPU environment and AI models...</p>
-        
+
         <div className="w-full max-w-md space-y-4">
           <div>
             <div className="flex justify-between text-xs font-mono mb-1.5 text-slate-400">
@@ -264,21 +296,21 @@ export default function DebateLens() {
               <span>{Math.round(progress.stt || 0)}%</span>
             </div>
             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-              <motion.div 
+              <motion.div
                 className="bg-blue-500 h-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${progress.stt || 0}%` }}
               />
             </div>
           </div>
-          
+
           <div>
             <div className="flex justify-between text-xs font-mono mb-1.5 text-slate-400">
               <span>PHI-3 LLM</span>
               <span>{Math.round(progress.llm || 0)}%</span>
             </div>
             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-              <motion.div 
+              <motion.div
                 className="bg-purple-500 h-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${progress.llm || 0}%` }}
@@ -304,10 +336,10 @@ export default function DebateLens() {
           </div>
           <h1 className="font-black text-2xl tracking-tighter italic uppercase">Debate<span className="text-blue-500 not-italic">Lens</span></h1>
         </div>
-        
+
         <div className="flex items-center gap-6">
           <div className="flex gap-2">
-            <select 
+            <select
               value={selectedDevice}
               onChange={(e) => setSelectedDevice(e.target.value)}
               className="bg-slate-800/50 border border-slate-700/50 text-[10px] rounded px-2 py-1 text-blue-400 font-bold"
@@ -317,23 +349,23 @@ export default function DebateLens() {
           </div>
 
           <div className="flex bg-slate-800/50 rounded-xl p-1 border border-slate-700/50 shadow-inner">
-            <button 
+            <button
               onClick={() => setActiveSpeaker('A')}
               className={cn(
                 "px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2",
-                activeSpeaker === 'A' 
-                  ? "bg-blue-600 text-white shadow-[0_4px_20px_rgba(37,99,235,0.4)] scale-105" 
+                activeSpeaker === 'A'
+                  ? "bg-blue-600 text-white shadow-[0_4px_20px_rgba(37,99,235,0.4)] scale-105"
                   : "text-slate-400 hover:text-slate-200"
               )}
             >
               Speaker A <span className="opacity-50 text-[10px] bg-black/20 px-1 rounded">1</span>
             </button>
-            <button 
+            <button
               onClick={() => setActiveSpeaker('B')}
               className={cn(
                 "px-5 py-2 rounded-lg text-sm font-bold transition-all duration-300 flex items-center gap-2",
-                activeSpeaker === 'B' 
-                  ? "bg-red-600 text-white shadow-[0_4px_20px_rgba(220,38,38,0.4)] scale-105" 
+                activeSpeaker === 'B'
+                  ? "bg-red-600 text-white shadow-[0_4px_20px_rgba(220,38,38,0.4)] scale-105"
                   : "text-slate-400 hover:text-slate-200"
               )}
             >
@@ -344,16 +376,16 @@ export default function DebateLens() {
           <div className="hidden lg:flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
             Press <kbd className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700 text-slate-300">TAB</kbd> to swap
           </div>
-          
+
           <div className="flex items-center gap-2 border-l border-slate-800 pl-6">
-            <button 
+            <button
               onClick={copyToClipboard}
               className="p-2.5 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-blue-400 transition-all active:scale-95"
               title="Copy Transcript"
             >
               <Copy className="w-5 h-5" />
             </button>
-            <button 
+            <button
               onClick={clearFeed}
               className="p-2.5 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-red-400 transition-all active:scale-95"
               title="Clear Feed"
@@ -362,14 +394,14 @@ export default function DebateLens() {
             </button>
           </div>
 
-          <button 
+          <button
             onClick={toggleListening}
             className={cn(
               "hidden md:flex items-center gap-2 px-4 py-2 rounded-xl border font-bold text-xs uppercase tracking-widest transition-all duration-300 active:scale-95",
               !vad.listening
                 ? "border-red-500/50 bg-red-500/10 text-red-400"
-                : (vad.userSpeaking) 
-                  ? "border-green-500/50 bg-green-500/10 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)]" 
+                : (vad.userSpeaking)
+                  ? "border-green-500/50 bg-green-500/10 text-green-400 shadow-[0_0_15px_rgba(34,197,94,0.3)]"
                   : "border-slate-700 bg-slate-800/50 text-slate-500"
             )}
           >
@@ -378,6 +410,38 @@ export default function DebateLens() {
           </button>
         </div>
       </header>
+
+      {/* Manual Input Section */}
+      <div className="px-6 py-4 bg-slate-900/30 border-b border-slate-800/30">
+        <form onSubmit={handleManualSubmit} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          <div className="flex-1 w-full">
+            <label htmlFor="manual-input" className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+              Manual Input (for text fact-checking)
+            </label>
+            <textarea
+              id="manual-input"
+              placeholder={`Enter text to fact-check as Speaker ${activeSpeaker}`}
+              className="w-full px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              rows={2}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleManualSubmit(e);
+                }
+              }}
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Minimum 3 words required • Press Enter to submit
+            </p>
+          </div>
+          <button
+            type="submit"
+            className="mt-4 sm:mt-0 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors whitespace-nowrap"
+          >
+            Submit for Fact-Check
+          </button>
+        </form>
+      </div>
 
       {/* Main Feed */}
       <main 
