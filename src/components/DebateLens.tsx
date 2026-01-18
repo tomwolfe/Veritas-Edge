@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAudioProcessor } from '@/hooks/useAudioProcessor';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, CheckCircle2, XCircle, AlertCircle, Loader2, Copy, Trash2 } from 'lucide-react';
+import { Mic, MicOff, CheckCircle2, XCircle, AlertCircle, Loader2, Copy, Trash2, ArrowLeftRight } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -17,11 +17,58 @@ interface Transcript {
   speaker: 'A' | 'B';
   isChecking: boolean;
   timestamp: number;
+  lastUpdated: number;
   factCheck?: {
     verdict: 'True' | 'False' | 'Unverified' | 'NOT_A_CLAIM';
     explanation: string;
   };
 }
+
+const AudioVisualizer = ({ listening, isSpeaking }: { listening: boolean; isSpeaking: boolean }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!listening || !canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationId: number;
+    const bars = 20;
+    const barWidth = 3;
+    const gap = 2;
+    const values = new Array(bars).fill(0);
+
+    const render = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      for (let i = 0; i < bars; i++) {
+        // Targeted simulation: if speaking, higher volatility
+        const target = isSpeaking ? Math.random() * 20 + 5 : Math.random() * 3;
+        values[i] += (target - values[i]) * 0.2; // Smooth transition
+        
+        const h = values[i];
+        const x = i * (barWidth + gap);
+        const y = (canvas.height - h) / 2;
+        
+        ctx.fillStyle = isSpeaking ? '#22c55e' : '#64748b';
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, h, 2);
+        ctx.fill();
+      }
+      
+      animationId = requestAnimationFrame(render);
+    };
+
+    render();
+    return () => cancelAnimationFrame(animationId);
+  }, [listening, isSpeaking]);
+
+  if (!listening) return <div className="w-[100px] h-6 bg-slate-800/30 rounded-md flex items-center justify-center text-[8px] text-slate-600 font-bold uppercase tracking-tighter">Mic Off</div>;
+
+  return <canvas ref={canvasRef} width={100} height={24} className="opacity-80" />;
+};
 
 export default function DebateLens() {
   const [transcripts, setTranscripts] = useState<Transcript[]>(() => {
@@ -47,6 +94,7 @@ export default function DebateLens() {
   const [progress, setProgress] = useState<{ stt: number; llm: number }>({ stt: 0, llm: 0 });
   const workerRef = useRef<Worker | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const factCheckTimers = useRef<Record<string, NodeJS.Timeout>>({});
 
   // Fetch available microphones
   useEffect(() => {
@@ -99,36 +147,79 @@ export default function DebateLens() {
     setTranscripts(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  const handleTranscription = useCallback((text: string, id: string) => {
+  const swapSpeaker = useCallback((id: string) => {
+    setTranscripts(prev => prev.map(t => 
+      t.id === id ? { ...t, speaker: t.speaker === 'A' ? 'B' : 'A' } : t
+    ));
+  }, []);
+
+  const triggerFactCheck = useCallback((text: string, id: string) => {
+    // Clear any existing timer for this ID
+    if (factCheckTimers.current[id]) {
+      clearTimeout(factCheckTimers.current[id]);
+    }
+
+    // Set a new timer (Debounce)
+    factCheckTimers.current[id] = setTimeout(() => {
+      setTranscripts(prev => prev.map(t => 
+        t.id === id ? { ...t, isChecking: true } : t
+      ));
+      
+      workerRef.current?.postMessage({
+        type: 'fact-check',
+        data: { text, id }
+      });
+      delete factCheckTimers.current[id];
+    }, 1500); // 1.5s wait for potential follow-up segments
+  }, []);
+
+  const handleTranscription = useCallback((text: string, id: string, speaker: 'A' | 'B') => {
     const trimmedText = text.trim();
     const wordCount = trimmedText.split(/\s+/).length;
     
-    // Intelligent filtering:
-    // 1. Minimum 4 words for speech (increased from 3)
-    // 2. Filter out common filler phrases and short fragments
     const fillers = /^(um|uh|ah|er|basically|actually|literally|honestly|you know|i mean|so|well|like)\s*,?\s*/i;
     const cleanText = trimmedText.replace(fillers, '');
     
-    if (wordCount < 4 || cleanText.length < 10) return;
+    if (wordCount < 2 || cleanText.length < 5) return;
 
-    const finalSpeaker = activeSpeakerRef.current;
+    setTranscripts(prev => {
+      const lastTranscript = prev[prev.length - 1];
+      const now = Date.now();
 
-    setTranscripts(prev => [
-      ...prev,
-      {
+      // Pareto Improvement: Intelligent Merging
+      // If same speaker and last segment was < 3 seconds ago, merge them
+      if (lastTranscript && 
+          lastTranscript.speaker === speaker && 
+          (now - lastTranscript.lastUpdated) < 3000) {
+        
+        const mergedText = `${lastTranscript.text} ${trimmedText}`;
+        
+        // Update existing transcript
+        const newTranscripts = prev.map((t, idx) => 
+          idx === prev.length - 1 
+            ? { ...t, text: mergedText, lastUpdated: now, isChecking: false } 
+            : t
+        );
+
+        // Re-trigger fact check with merged text
+        triggerFactCheck(mergedText, lastTranscript.id);
+        return newTranscripts;
+      }
+
+      // Otherwise, create new transcript
+      const newTranscript: Transcript = {
         id,
         text: trimmedText,
-        speaker: finalSpeaker,
-        isChecking: true,
-        timestamp: Date.now(),
-      }
-    ]);
+        speaker,
+        isChecking: false, // Wait for debounce
+        timestamp: now,
+        lastUpdated: now,
+      };
 
-    workerRef.current?.postMessage({
-      type: 'fact-check',
-      data: { text: trimmedText, id }
+      triggerFactCheck(trimmedText, id);
+      return [...prev, newTranscript];
     });
-  }, []);
+  }, [triggerFactCheck]);
 
   const handleFactCheckStream = useCallback((result: string, id: string, isDone: boolean) => {
     setTranscripts(prev => prev.map(t => {
@@ -143,36 +234,20 @@ export default function DebateLens() {
           };
         }
 
-        // Enhanced parsing with multiple format support
         let verdict: 'True' | 'False' | 'Unverified' | null = null;
         let explanation = '';
 
-        // Format 0: [VERDICT] Verdict Explanation (New merged format)
         let verdictMatch = result.match(/\[VERDICT\]\s*([Tt]rue|[Ff]alse|[Uu]nverified)\s*(.*)/i);
-        
-        if (!verdictMatch) {
-          // Format 1: [Verdict] Explanation
-          verdictMatch = result.match(/\[([Tt]rue|[Ff]alse|[Uu]nverified)\]\s*(.*)/);
-        }
-        if (!verdictMatch) {
-          // Format 2: Verdict: Explanation
-          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified):\s*(.*)/);
-        }
-        if (!verdictMatch) {
-          // Format 3: Verdict | Explanation
-          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*\|\s*(.*)/);
-        }
-        if (!verdictMatch) {
-          // Format 4: Verdict - Explanation
-          verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*[-–—]\s*(.*)/);
-        }
+        if (!verdictMatch) verdictMatch = result.match(/\[([Tt]rue|[Ff]alse|[Uu]nverified)\]\s*(.*)/);
+        if (!verdictMatch) verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified):\s*(.*)/);
+        if (!verdictMatch) verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*\|\s*(.*)/);
+        if (!verdictMatch) verdictMatch = result.match(/([Tt]rue|[Ff]alse|[Uu]nverified)\s*[-–—]\s*(.*)/);
 
         if (verdictMatch) {
           const matchedVerdict = verdictMatch[1].toLowerCase();
           verdict = (matchedVerdict.charAt(0).toUpperCase() + matchedVerdict.slice(1)) as 'True' | 'False' | 'Unverified';
           explanation = verdictMatch[2].trim() || 'Analyzing...';
         } else {
-          // Format 5: Just verdict word with context
           const verdictWordMatch = result.match(/\b([Tt]rue|[Ff]alse|[Uu]nverified)\b/i);
           if (verdictWordMatch) {
             const matchedVerdict = verdictWordMatch[1].toLowerCase();
@@ -181,16 +256,10 @@ export default function DebateLens() {
           }
         }
 
-        // If we have a verdict, use it; otherwise default to Unverified
         if (verdict) {
-          return {
-            ...t,
-            isChecking: !isDone,
-            factCheck: { verdict, explanation }
-          };
+          return { ...t, isChecking: !isDone, factCheck: { verdict, explanation } };
         }
 
-        // Fallback for partial/initial stream
         const cleanDisplayResult = result.replace('[VERDICT]', '').trim();
         return {
           ...t,
@@ -209,9 +278,9 @@ export default function DebateLens() {
       const text = textarea.value.trim();
       const wordCount = text.split(/\s+/).length;
 
-      // Only submit if it meets the minimum word count
       if (wordCount >= 3) {
         const id = Math.random().toString(36).substring(7);
+        const now = Date.now();
 
         setTranscripts(prev => [
           ...prev,
@@ -220,7 +289,8 @@ export default function DebateLens() {
             text,
             speaker: activeSpeaker,
             isChecking: true,
-            timestamp: Date.now(),
+            timestamp: now,
+            lastUpdated: now,
           }
         ]);
 
@@ -229,7 +299,7 @@ export default function DebateLens() {
           data: { text, id }
         });
 
-        textarea.value = ''; // Clear the input
+        textarea.value = '';
       }
     }
   }, [activeSpeaker]);
@@ -252,7 +322,7 @@ export default function DebateLens() {
     });
 
     w.onmessage = (e) => {
-      const { status, progress: p, model, text, id, error, isDone } = e.data;
+      const { status, progress: p, model, text, id, speaker, error, isDone } = e.data;
 
       if (status === 'ready') setStatus('ready');
       if (status === 'error') {
@@ -263,7 +333,6 @@ export default function DebateLens() {
         } else {
           setStatus('error');
           setErrorMessage(error);
-          console.error(error);
         }
       }
       if (status === 'progress') {
@@ -271,7 +340,7 @@ export default function DebateLens() {
         setProgress(prev => ({ ...prev, [model]: p }));
       }
       if (status === 'transcription') {
-        handleTranscription(text, id);
+        handleTranscription(text, id, speaker);
       }
       if (status === 'fact-check-stream') {
         handleFactCheckStream(text, id, isDone);
@@ -424,6 +493,12 @@ export default function DebateLens() {
         </div>
 
         <div className="flex items-center gap-6">
+          {/* Pareto Improvement: Audio Visualizer */}
+          <div className="flex flex-col items-center">
+            <AudioVisualizer listening={vad.listening} isSpeaking={vad.userSpeaking} />
+            <div className="text-[7px] text-slate-500 font-black uppercase tracking-widest mt-1">Audio Input Level</div>
+          </div>
+
           <div className="flex gap-2">
             <select
               value={selectedDevice}
@@ -581,16 +656,26 @@ export default function DebateLens() {
                   />
                 )}
                 
-                <button
-                  onClick={() => deleteTranscript(t.id)}
-                  className={cn(
-                    "absolute top-4 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 z-20",
-                    t.speaker === 'A' ? "right-4" : "left-4"
-                  )}
-                  title="Delete transcript"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className={cn(
+                  "absolute top-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-20",
+                  t.speaker === 'A' ? "right-4" : "left-4"
+                )}>
+                  {/* Pareto Improvement: Swap Speaker */}
+                  <button
+                    onClick={() => swapSpeaker(t.id)}
+                    className="p-1.5 hover:bg-blue-500/20 rounded-lg text-slate-500 hover:text-blue-400"
+                    title="Swap Speaker"
+                  >
+                    <ArrowLeftRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => deleteTranscript(t.id)}
+                    className="p-1.5 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400"
+                    title="Delete transcript"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
 
                 <div className={cn(
                   "flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] mb-3",
@@ -645,7 +730,6 @@ export default function DebateLens() {
                     {t.factCheck.explanation}
                   </p>
                   
-                  {/* Decorative glow */}
                   <div className={cn(
                     "absolute top-0 right-0 w-24 h-24 blur-[40px] opacity-20 -mr-12 -mt-12 rounded-full",
                     t.factCheck.verdict === 'True' && "bg-green-500",
@@ -683,7 +767,7 @@ export default function DebateLens() {
           <span>Phi-3 Mini</span>
         </div>
         <div className="hidden sm:block">
-          DebateLens v0.2.0 • Real-time Fact-Checking
+          DebateLens v0.2.1 • Real-time Fact-Checking
         </div>
       </footer>
 
