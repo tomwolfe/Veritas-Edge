@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+junit.xml
+*.log
 
 # next.js
 /.next/
@@ -51,3 +53,18 @@ Thumbs.db
 .cache
 .huggingface
 .transformers_cache
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Editor files
+.history
+.svelte-kit
+.nyc_output
+
+# Local config
+config.local
